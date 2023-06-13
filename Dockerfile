@@ -13,6 +13,7 @@
 # limitations under the License.
 
 ARG BUILDPLATFORM
+ARG BASE_IMAGE
 
 FROM --platform=$BUILDPLATFORM golang:1.20.3 as builder
 
@@ -33,11 +34,11 @@ RUN clean-install util-linux e2fsprogs mount ca-certificates udev xfsprogs nvme-
 FROM gcr.io/distroless/base-debian11 as distroless-base
 
 # The distroless amd64 image has a target triplet of x86_64
-FROM distroless-base AS distroless-amd64
+FROM $BASE_IMAGE AS distroless-amd64
 ENV LIB_DIR_PREFIX x86_64
 
 # The distroless arm64 image has a target triplet of aarch64
-FROM distroless-base AS distroless-arm64
+FROM $BASE_IMAGE AS distroless-arm64
 ENV LIB_DIR_PREFIX aarch64
 
 FROM distroless-$TARGETARCH as output-image
