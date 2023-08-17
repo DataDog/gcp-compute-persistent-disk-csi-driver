@@ -1,5 +1,8 @@
 include: https://gitlab-templates.ddbuild.io/compute-delivery/v2/compute-delivery.yml
 
+variables:
+  KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: gcp-compute-persistent-disk-csi-driver
+
 test:
   stage: verify
   tags: [ "arch:amd64" ]
