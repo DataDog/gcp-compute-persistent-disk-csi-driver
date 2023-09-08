@@ -17,9 +17,12 @@ package gceGCEDriver
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -221,8 +224,64 @@ func (ns *GCENodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePub
 		return nil, status.Error(codes.Internal, fmt.Sprintf("NodePublishVolume mount of disk failed: %v", err.Error()))
 	}
 
+	// Datadog fix for CSI migration
+	repairVolumeIdForKubelet(targetPath)
+
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %v to %s", volumeID, targetPath)
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func repairVolumeIdForKubelet(targetPath string) {
+	// Define the file path and the replacement string
+	volPath := filepath.Dir(targetPath)
+	volDataFileName := "vol_data.json"
+	dataFile := filepath.Join(volPath, volDataFileName)
+
+	projectId, err := getProjectIdFromInstanceMetadata()
+	if err != nil {
+		klog.Errorf("Could not get project id from instance metadata: %v", err)
+		return
+	}
+
+	content, err := os.ReadFile(dataFile)
+	if err != nil {
+		klog.Errorf("Error reading file: %v", err)
+		return
+	}
+
+	fileContent := string(content)
+	modifiedContent := strings.Replace(fileContent, "UNSPECIFIED", projectId, 1)
+
+	err = os.WriteFile(dataFile, []byte(modifiedContent), 0644)
+	if err != nil {
+		klog.Errorf("Error writing to file: %v", err)
+		return
+	}
+}
+
+func getProjectIdFromInstanceMetadata() (string, error) {
+	req, err := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/project/project-id", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status code not 200")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(body), nil
 }
 
 func makeFile(path string) error {
