@@ -13,9 +13,10 @@ jobs:
   runs-on: ubuntu-latest
   steps:
     - name: Create upstream version tag
-      uses: DataDog/sync-upstream-release-tag@v0.3.3
+      uses: DataDog/sync-upstream-release-tag@main
       with:
         github_actor: "${GITHUB_ACTOR}"
         github_repository: "${GITHUB_REPOSITORY}"
         github_token: ${{ secrets.GITHUB_TOKEN }}
         upstream_repo: kubernetes-sigs/gcp-compute-persistent-disk-csi-driver
+        major_version: "1"
