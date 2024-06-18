@@ -18,6 +18,7 @@ FROM --platform=$BUILDPLATFORM golang:1.23.0 AS builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
+ENV GOTOOLCHAIN auto
 
 WORKDIR /go/src/sigs.k8s.io/gcp-compute-persistent-disk-csi-driver
 ADD . .
