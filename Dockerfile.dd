@@ -18,12 +18,14 @@ FROM $BASE_IMAGE
 # google_nvme_id script depends on the following packages: nvme-cli, xxd, bash
 USER root
 RUN clean-apt install util-linux e2fsprogs mount ca-certificates udev xfsprogs nvme-cli xxd bash
+
+# Copy NVME support required script and rules into base image.
+COPY deploy/kubernetes/udev/google_nvme_id /lib/udev_containerized/google_nvme_id
+RUN ln -s /lib/udev/scsi_id /lib/udev_containerized/scsi_id
+
 USER dog
 
 # Copy the binary
 COPY --from=builder /go/src/sigs.k8s.io/gcp-compute-persistent-disk-csi-driver/bin/gce-pd-csi-driver /gce-pd-csi-driver
-
-# Copy NVME support required script and rules into base image.
-COPY deploy/kubernetes/udev/google_nvme_id /lib/udev_containerized/google_nvme_id
 
 ENTRYPOINT ["/gce-pd-csi-driver"]
