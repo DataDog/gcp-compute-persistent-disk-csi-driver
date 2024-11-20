@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sigs.k8s.io/gcp-compute-persistent-disk-csi-driver/pkg/common"
 	"strings"
 	"testing"
@@ -1132,7 +1133,7 @@ func TestBlockingFormatAndMount(t *testing.T) {
 	runBlockingFormatAndMount(t, gceDriver, readyToExecute)
 }
 
-const startupTaintKey = "pd.csi.storage.gke.io/agent-not-ready"
+const startupTaintKey = common.PDCSIDriverName + agentNotReadyNodeTaintKeySuffix
 
 func TestRemoveNotReadyTaint(t *testing.T) {
 	var count int32 = 1
@@ -1206,6 +1207,36 @@ func TestRemoveNotReadyTaint(t *testing.T) {
 			csiNodes:      []storagev1.CSINode{},
 			expectedTaint: nil,
 		},
+		{
+			name: "node without allocatable set",
+			nodes: []v1.Node{{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node4",
+				},
+				Spec: v1.NodeSpec{
+					Taints: []v1.Taint{{
+						Key:    startupTaintKey,
+						Effect: v1.TaintEffectNoSchedule,
+					}},
+				},
+			}},
+			csiNodes: []storagev1.CSINode{{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node4",
+				},
+				Spec: storagev1.CSINodeSpec{
+					Drivers: []storagev1.CSINodeDriver{{
+						Name:        common.PDCSIDriverName,
+						NodeID:      "node4",
+						Allocatable: nil,
+					}},
+				},
+			}},
+			expectedTaint: &v1.Taint{
+				Key:    startupTaintKey,
+				Effect: v1.TaintEffectNoSchedule,
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1247,8 +1278,8 @@ func TestRemoveNotReadyTaint(t *testing.T) {
 			}
 
 			taint := getTaintByKey(node.Spec.Taints, startupTaintKey)
-			if taint != tc.expectedTaint {
-				t.Errorf("Expected taint %v, but got %v", tc.expectedTaint, taint)
+			if !reflect.DeepEqual(taint, tc.expectedTaint) {
+				t.Fatalf("Expected taint %v, but got %v", tc.expectedTaint, taint)
 			}
 		})
 	}
