@@ -532,8 +532,7 @@ func (ns *GCENodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRe
 }
 
 func (ns *GCENodeServer) getNodeID() string {
-	nodeID := common.CreateNodeID(ns.MetadataService.GetProject(), ns.MetadataService.GetZone(), ns.MetadataService.GetName())
-	return nodeID
+	return common.CreateNodeID(ns.MetadataService.GetProject(), ns.MetadataService.GetZone(), ns.MetadataService.GetName())
 }
 
 func (ns *GCENodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
@@ -699,7 +698,7 @@ func (ns *GCENodeServer) GetVolumeLimits() (int64, error) {
 func (ns *GCENodeServer) RemoveStartupTaint(kubeClient kubernetes.Interface) {
 	// Remove taint from node to indicate driver startup success
 	// This is done at the last possible moment to prevent race conditions or false positive removals
-	time.AfterFunc(time.Second, func() {
+	time.AfterFunc(taintRemovalInitialDelay, func() {
 		removeTaintInBackground(kubeClient, taintRemovalBackoff, removeNotReadyTaint)
 	})
 }
