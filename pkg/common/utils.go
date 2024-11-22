@@ -20,8 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"net/http"
 	"regexp"
 	"slices"
@@ -697,13 +695,4 @@ func NewLimiter(limit, burst int, emptyBucket bool) *rate.Limiter {
 	}
 
 	return limiter
-}
-
-func GetKubeClient(kubeconfig string) (clientset.Interface, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		return nil, err
-	}
-
-	return clientset.NewForConfig(config)
 }

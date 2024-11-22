@@ -32,6 +32,4 @@ const (
 
 	// Label that is set on a disk when it is used by a 'multi-zone' VolumeHandle
 	MultiZoneLabel = "goog-gke-multi-zone"
-
-	PDCSIDriverName = "pd.csi.storage.gke.io"
 )
