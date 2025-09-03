@@ -11,3 +11,9 @@ build-docker-image:
   variables:
     EXTRA_ARGS: "--build-arg=BUILDPLATFORM=linux --build-arg=STAGINGVERSION=$CI_COMMIT_TAG -f Dockerfile.dd"
   extends: .build-docker-image
+
+build-nydus-image:
+  needs: ["build-docker-image"]
+  variables:
+    IMAGE_SUFFIX: ""
+  extends: .build-nydus-image
