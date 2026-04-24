@@ -118,6 +118,9 @@ var (
 
 	enableDiskSizeValidation = flag.Bool("enable-disk-size-validation", false, "If set to true, the driver will validate that the requested disk size is matches the physical disk size. This flag is disabled by default.")
 
+	enableHyperdiskMigrationFlag  = flag.Bool("enable-hyperdisk-migration", false, "If set to true, the CSI Driver will transparently convert supported PD disks (pd-balanced, pd-standard, pd-ssd) to hyperdisk-balanced when attaching to a node whose machine family is listed in --hyperdisk-required-machine-families. Disabled by default.")
+	hyperdiskRequiredFamiliesFlag = flag.String("hyperdisk-required-machine-families", "", "Comma separated list of machine families (e.g. n4,n4a,n4d,c4,c4a,c4d) that require hyperdisk-balanced and therefore trigger PD-to-hyperdisk-balanced migration when --enable-hyperdisk-migration is set.")
+
 	runTaintController = flag.Bool("run-taint-controller", false, "Enables the Taint Cleanup Controller (watches CSINodes and removes startup taints once CSINode resource is created)")
 	runTaintWebhook    = flag.Bool("run-taint-webhook", false, "Enables the Mutating Admission Webhook (adds startup taints to Nodes to delay workloads until the CSINode resource is created)")
 	webhookPort        = flag.Int("webhook-port", 9443, "The port for the admission webhook to listen on")
@@ -285,10 +288,12 @@ func handle() {
 		maxBackoffDuration := time.Duration(*errorBackoffMaxDurationMs) * time.Millisecond
 		// TODO(2042): Move more of the constructor args into this struct
 		args := &driver.GCEControllerServerArgs{
-			EnableDiskTopology:       *diskTopology,
-			EnableDiskSizeValidation: *enableDiskSizeValidation,
-			EnableDynamicVolumes:     *dynamicVolumes,
-			EnableGCEDiskStatus:      *gceDiskStatus,
+			EnableDiskTopology:        *diskTopology,
+			EnableDiskSizeValidation:  *enableDiskSizeValidation,
+			EnableDynamicVolumes:      *dynamicVolumes,
+			EnableGCEDiskStatus:       *gceDiskStatus,
+			EnableHyperdiskMigration:  *enableHyperdiskMigrationFlag,
+			HyperdiskRequiredFamilies: parseCSVFlag(*hyperdiskRequiredFamiliesFlag),
 		}
 
 		controllerServer = driver.NewControllerServer(gceDriver, cloudProvider, initialBackoffDuration, maxBackoffDuration, fallbackRequisiteZones, *enableStoragePoolsFlag, *enableDataCacheFlag, multiZoneVolumeHandleConfig, listVolumesConfig, provisionableDisksConfig, *enableHdHAFlag, args)

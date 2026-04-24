@@ -125,8 +125,15 @@ type GCECompute interface {
 	ListZones(ctx context.Context, region string) ([]string, error)
 	ListSnapshots(ctx context.Context, filter string) ([]*computev1.Snapshot, string, error)
 	GetSnapshot(ctx context.Context, project, snapshotName string) (*computev1.Snapshot, error)
+	GetSnapshotOrNil(ctx context.Context, project, snapshotName string) (*computev1.Snapshot, error)
 	CreateSnapshot(ctx context.Context, project string, volKey *meta.Key, snapshotName string, snapshotParams parameters.SnapshotParameters) (*computev1.Snapshot, error)
 	DeleteSnapshot(ctx context.Context, project, snapshotName string) error
+	// Hyperdisk-migration helpers. Each issues exactly one GCE RPC and returns;
+	// callers poll resource .Status and retry rather than blocking on operations.
+	GetDiskOrNil(ctx context.Context, project string, volKey *meta.Key) (*CloudDisk, error)
+	SnapshotDisk(ctx context.Context, project string, sourceKey *meta.Key, snapshotName string, labels map[string]string, description string) error
+	InsertDiskFromSnapshot(ctx context.Context, project string, destKey *meta.Key, snapshotSelfLink, diskType string, sizeGb int64, labels map[string]string) error
+	InsertDiskFromDisk(ctx context.Context, project string, destKey *meta.Key, sourceDiskSelfLink string, labels map[string]string) error
 	ListImages(ctx context.Context, filter string) ([]*computev1.Image, string, error)
 	GetImage(ctx context.Context, project, imageName string) (*computev1.Image, error)
 	CreateImage(ctx context.Context, project string, volKey *meta.Key, imageName string, snapshotParams parameters.SnapshotParameters) (*computev1.Image, error)
@@ -1286,6 +1293,103 @@ func (cloud *CloudProvider) GetSnapshot(ctx context.Context, project, snapshotNa
 		return nil, err
 	}
 	return snapshot, nil
+}
+
+// GetSnapshotOrNil returns (nil, nil) if the snapshot does not exist, propagating other errors.
+func (cloud *CloudProvider) GetSnapshotOrNil(ctx context.Context, project, snapshotName string) (*computev1.Snapshot, error) {
+	snap, err := cloud.GetSnapshot(ctx, project, snapshotName)
+	if err != nil {
+		if IsGCENotFoundError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return snap, nil
+}
+
+// GetDiskOrNil returns (nil, nil) if the disk does not exist, propagating other errors.
+func (cloud *CloudProvider) GetDiskOrNil(ctx context.Context, project string, volKey *meta.Key) (*CloudDisk, error) {
+	disk, err := cloud.GetDisk(ctx, project, volKey)
+	if err != nil {
+		if IsGCENotFoundError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return disk, nil
+}
+
+// SnapshotDisk starts a snapshot of a zonal source disk. It does not wait for
+// the snapshot to reach READY; callers poll status via GetSnapshot.
+// Tolerates alreadyExists: a previous call already kicked off the same op.
+func (cloud *CloudProvider) SnapshotDisk(ctx context.Context, project string, sourceKey *meta.Key, snapshotName string, labels map[string]string, description string) error {
+	klog.V(5).Infof("Creating hyperdisk-migration snapshot %s from disk %v", snapshotName, sourceKey)
+	if description == "" {
+		description = "Snapshot created by GCE-PD CSI Driver for hyperdisk migration"
+	}
+	snap := &computev1.Snapshot{
+		Name:        snapshotName,
+		Description: description,
+		Labels:      labels,
+		SourceDisk:  cloud.GetDiskSourceURI(project, sourceKey),
+	}
+	_, err := cloud.service.Snapshots.Insert(project, snap).Context(ctx).Do()
+	if err != nil {
+		if IsGCEError(err, "alreadyExists") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// InsertDiskFromSnapshot starts a zonal disk insert from a snapshot, setting a
+// specific disk type. Does not wait for READY. Tolerates alreadyExists.
+func (cloud *CloudProvider) InsertDiskFromSnapshot(ctx context.Context, project string, destKey *meta.Key, snapshotSelfLink, diskType string, sizeGb int64, labels map[string]string) error {
+	if destKey.Type() != meta.Zonal {
+		return fmt.Errorf("InsertDiskFromSnapshot requires a zonal key, got %v", destKey.String())
+	}
+	klog.V(5).Infof("Inserting disk %v from snapshot %s (type=%s)", destKey, snapshotSelfLink, diskType)
+	disk := &computev1.Disk{
+		Name:           destKey.Name,
+		SizeGb:         sizeGb,
+		Type:           cloud.GetDiskTypeURI(project, destKey, diskType),
+		SourceSnapshot: snapshotSelfLink,
+		Labels:         labels,
+		Description:    "Disk created by GCE-PD CSI Driver for hyperdisk migration",
+	}
+	_, err := cloud.service.Disks.Insert(project, destKey.Zone, disk).Context(ctx).Do()
+	if err != nil {
+		if IsGCEError(err, "alreadyExists") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// InsertDiskFromDisk starts a zonal disk insert cloning an existing disk via
+// sourceDisk. The new disk inherits the source's type. Does not wait for READY.
+// Tolerates alreadyExists.
+func (cloud *CloudProvider) InsertDiskFromDisk(ctx context.Context, project string, destKey *meta.Key, sourceDiskSelfLink string, labels map[string]string) error {
+	if destKey.Type() != meta.Zonal {
+		return fmt.Errorf("InsertDiskFromDisk requires a zonal key, got %v", destKey.String())
+	}
+	klog.V(5).Infof("Inserting disk %v from source disk %s", destKey, sourceDiskSelfLink)
+	disk := &computev1.Disk{
+		Name:        destKey.Name,
+		SourceDisk:  sourceDiskSelfLink,
+		Labels:      labels,
+		Description: "Disk created by GCE-PD CSI Driver for hyperdisk migration",
+	}
+	_, err := cloud.service.Disks.Insert(project, destKey.Zone, disk).Context(ctx).Do()
+	if err != nil {
+		if IsGCEError(err, "alreadyExists") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (cloud *CloudProvider) DeleteSnapshot(ctx context.Context, project, snapshotName string) error {

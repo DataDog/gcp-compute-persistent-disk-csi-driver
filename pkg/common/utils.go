@@ -233,6 +233,25 @@ func ParseMachineType(machineTypeUrl string) (string, error) {
 	return machineType[1], nil
 }
 
+// MachineFamilyFromType returns the family prefix (e.g. "n4", "c4a") from a
+// machine type URL or bare machine type. Empty string on parse failure.
+// Examples:
+//
+//	"zones/us-central1-c/machineTypes/c4-standard-4" -> "c4"
+//	"n4-highmem-16"                                  -> "n4"
+//	"e2-custom-2-4096"                               -> "e2"
+func MachineFamilyFromType(machineTypeUrl string) string {
+	machineType := machineTypeUrl
+	if parsed, err := ParseMachineType(machineTypeUrl); err == nil {
+		machineType = parsed
+	}
+	idx := strings.Index(machineType, "-")
+	if idx <= 0 {
+		return ""
+	}
+	return machineType[:idx]
+}
+
 // CodeForError returns the grpc error code that maps to the http error code for the
 // passed in user googleapi error or context error. Returns codes.Internal if the given
 // error is not a googleapi error caused by the user. userErrorCodeMap is used for

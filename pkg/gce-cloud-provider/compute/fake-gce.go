@@ -411,6 +411,101 @@ func (cloud *FakeCloudProvider) CreateSnapshot(ctx context.Context, project stri
 	return snapshotToCreate, nil
 }
 
+func (cloud *FakeCloudProvider) GetSnapshotOrNil(ctx context.Context, project, snapshotName string) (*computev1.Snapshot, error) {
+	snap, ok := cloud.snapshots[snapshotName]
+	if !ok {
+		return nil, nil
+	}
+	return snap, nil
+}
+
+func (cloud *FakeCloudProvider) GetDiskOrNil(ctx context.Context, project string, volKey *meta.Key) (*CloudDisk, error) {
+	disk, ok := cloud.disks[volKey.String()]
+	if !ok {
+		return nil, nil
+	}
+	return disk, nil
+}
+
+func (cloud *FakeCloudProvider) SnapshotDisk(ctx context.Context, project string, sourceKey *meta.Key, snapshotName string, labels map[string]string, description string) error {
+	if _, ok := cloud.snapshots[snapshotName]; ok {
+		return nil
+	}
+	sourceDisk, ok := cloud.disks[sourceKey.String()]
+	var sizeGb int64 = int64(DiskSizeGb)
+	if ok {
+		sizeGb = sourceDisk.GetSizeGb()
+		if sizeGb <= 0 {
+			sizeGb = int64(DiskSizeGb)
+		}
+	}
+	cloud.snapshots[snapshotName] = &computev1.Snapshot{
+		Name:        snapshotName,
+		DiskSizeGb:  sizeGb,
+		Status:      "READY",
+		SelfLink:    cloud.getGlobalSnapshotURI(project, snapshotName),
+		SourceDisk:  cloud.GetDiskSourceURI(project, sourceKey),
+		Labels:      labels,
+		Description: description,
+	}
+	return nil
+}
+
+func (cloud *FakeCloudProvider) InsertDiskFromSnapshot(ctx context.Context, project string, destKey *meta.Key, snapshotSelfLink, diskType string, sizeGb int64, labels map[string]string) error {
+	if destKey.Type() != meta.Zonal {
+		return fmt.Errorf("InsertDiskFromSnapshot requires a zonal key, got %v", destKey.String())
+	}
+	if _, ok := cloud.disks[destKey.String()]; ok {
+		return nil
+	}
+	d := &computebeta.Disk{
+		Name:             destKey.Name,
+		SizeGb:           sizeGb,
+		Type:             cloud.GetDiskTypeURI(project, destKey, diskType),
+		SourceSnapshot:   snapshotSelfLink,
+		Status:           cloud.mockDiskStatus,
+		Zone:             destKey.Zone,
+		SelfLink:         fmt.Sprintf("%sprojects/%s/zones/%s/disks/%s", BasePath, project, destKey.Zone, destKey.Name),
+		Labels:           labels,
+		LabelFingerprint: "fake-fingerprint",
+	}
+	cloud.disks[destKey.String()] = CloudDiskFromBeta(d)
+	return nil
+}
+
+func (cloud *FakeCloudProvider) InsertDiskFromDisk(ctx context.Context, project string, destKey *meta.Key, sourceDiskSelfLink string, labels map[string]string) error {
+	if destKey.Type() != meta.Zonal {
+		return fmt.Errorf("InsertDiskFromDisk requires a zonal key, got %v", destKey.String())
+	}
+	if _, ok := cloud.disks[destKey.String()]; ok {
+		return nil
+	}
+	// Inherit type from the source disk if we can find it.
+	var inheritedType string
+	var sizeGb int64
+	for _, d := range cloud.disks {
+		if d.GetSelfLink() == sourceDiskSelfLink {
+			inheritedType = d.GetPDType()
+			sizeGb = d.GetSizeGb()
+			break
+		}
+	}
+	typeURI := cloud.GetDiskTypeURI(project, destKey, inheritedType)
+	d := &computebeta.Disk{
+		Name:             destKey.Name,
+		SizeGb:           sizeGb,
+		Type:             typeURI,
+		SourceDisk:       sourceDiskSelfLink,
+		Status:           cloud.mockDiskStatus,
+		Zone:             destKey.Zone,
+		SelfLink:         fmt.Sprintf("%sprojects/%s/zones/%s/disks/%s", BasePath, project, destKey.Zone, destKey.Name),
+		Labels:           labels,
+		LabelFingerprint: "fake-fingerprint",
+	}
+	cloud.disks[destKey.String()] = CloudDiskFromBeta(d)
+	return nil
+}
+
 func (cloud *FakeCloudProvider) ResizeDisk(ctx context.Context, project string, volKey *meta.Key, requestBytes int64) (int64, error) {
 	disk, ok := cloud.disks[volKey.String()]
 	if !ok {

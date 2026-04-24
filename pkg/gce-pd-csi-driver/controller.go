@@ -133,13 +133,26 @@ type GCEControllerServer struct {
 
 	EnableDiskTopology       bool
 	EnableDiskSizeValidation bool
+
+	// Hyperdisk migration state. When enableHyperdiskMigration is true and the
+	// target node's machine family is in hyperdiskRequiredFamilies, supported PD
+	// disks are transparently converted to hyperdisk-balanced before attach.
+	enableHyperdiskMigration  bool
+	hyperdiskRequiredFamilies sets.String
+	// convertLocks serializes migration steps for a given disk name across
+	// concurrent ControllerPublishVolume retries on the same controller replica.
+	// Contention is rare (kubelet's retry backoff is on the order of minutes);
+	// we fail-open with Unavailable and let kubelet retry.
+	convertLocks *common.VolumeLocks
 }
 
 type GCEControllerServerArgs struct {
-	EnableDiskTopology       bool
-	EnableDiskSizeValidation bool
-	EnableDynamicVolumes     bool
-	EnableGCEDiskStatus      bool
+	EnableDiskTopology        bool
+	EnableDiskSizeValidation  bool
+	EnableDynamicVolumes      bool
+	EnableGCEDiskStatus       bool
+	EnableHyperdiskMigration  bool
+	HyperdiskRequiredFamilies []string
 }
 
 type MultiZoneVolumeHandleConfig struct {
@@ -1193,6 +1206,16 @@ func (gceCS *GCEControllerServer) executeControllerPublishVolume(ctx context.Con
 		return nil, status.Errorf(codes.Aborted, constants.VolumeOperationAlreadyExistsFmt, lockingVolumeID), nil
 	}
 	defer gceCS.volumeLocks.Release(lockingVolumeID)
+
+	// Recovery gate: runs BEFORE the GetDisk/NotFound path below so that a
+	// migration interrupted between source-delete and final-insert can resume.
+	// During that window, GetDisk returns notFound, which the block below treats
+	// as terminal; the recovery gate short-circuits with codes.Unavailable so
+	// kubelet keeps retrying.
+	if err := gceCS.maybeRecoverMigration(ctx, project, volKey); err != nil {
+		return nil, err, nil
+	}
+
 	disk, err := gceCS.CloudProvider.GetDisk(ctx, project, volKey)
 	if err != nil {
 		if gce.IsGCENotFoundError(err) {
@@ -1209,6 +1232,13 @@ func (gceCS *GCEControllerServer) executeControllerPublishVolume(ctx context.Con
 			return nil, status.Errorf(codes.NotFound, "Could not find instance %v: %v", nodeID, err.Error()), disk
 		}
 		return nil, common.LoggedError("Failed to get instance: ", err), disk
+	}
+
+	// Initiation gate: only fires for supported PD disks whose target node's
+	// machine family requires hyperdisk. After this fires once, subsequent
+	// ControllerPublishVolume retries drive progress via the recovery gate.
+	if err := gceCS.maybeInitiateMigration(ctx, project, volKey, disk, instance); err != nil {
+		return nil, err, disk
 	}
 
 	if gceCS.multiZoneVolumeHandleConfig.Enable && volumeIsMultiZone {
