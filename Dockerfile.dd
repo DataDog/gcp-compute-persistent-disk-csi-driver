@@ -21,7 +21,9 @@ RUN clean-apt install util-linux e2fsprogs mount ca-certificates udev xfsprogs n
 
 # Copy NVME support required script and rules into base image.
 COPY deploy/kubernetes/udev/google_nvme_id /lib/udev_containerized/google_nvme_id
-RUN ln -s /lib/udev/scsi_id /lib/udev_containerized/scsi_id
+# Copy, do not symlink: /lib/udev is a hostPath mount at runtime, and the host
+# binary may need libraries this image does not ship.
+RUN cp /lib/udev/scsi_id /lib/udev_containerized/scsi_id
 
 USER dog
 
